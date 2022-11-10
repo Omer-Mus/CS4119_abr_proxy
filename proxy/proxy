@@ -8,208 +8,174 @@ import _thread
 import time
 import xml.etree.ElementTree as ET
 
-BUFFER_SIZE = 1048576
+BUFFER_SIZE = 1040000
 server_port = 8080
 clrf = "\r\n\r\n"
 cl = "\r\n"
 bitrate_array = []
 
 
-def recv_http_message(sock):
-    header = b''
-    body = b''
-    not_found_header = True
-    content_length = -1
-    while True:
-        cur = sock.recv(BUFFER_SIZE)
-        if not cur:
-            return "", 0
-        if not_found_header:
-            header += cur
-        else:
-            body += cur
-        if content_length != -1 and len(body) >= content_length:
-            break
-        if clrf.encode() in header:
-            splited = header.split(clrf.encode())
-            header = splited[0]
-            body = splited[1]
-            not_found_header = False
-            content_length = 0
-            lines = header.split(cl.encode())
-            for line in lines:
-                if line.startswith(b"Content-Length"):
-                    content_length = int(line.split(b" ")[1])
-            if not content_length or len(body) >= content_length:
-                break
-    http_message = header + clrf.encode() + body
-    return http_message, content_length
-
-
-def get_http_path(_message):
-    lines = _message.split(cl.encode())
-    return lines[0].split(b" ")[1]
-
-
-def get_floor_or_min(ls, x):
-    left = 0
-    right = len(ls) - 1
-    while left <= right:
-        mid = (left + right) // 2
-        if ls[mid] == x:
-            return mid
-        elif ls[mid] < x:
-            left = mid + 1
-        else:
-            right = mid - 1
-    if right == -1:
-        right = 0
-    return ls[right]
-
-
-def io_select(sock, req_type):
+def io_select(sock, _input):
     while True:
         inputs = [sock]
         readable, writable, exceptional = select.select(inputs, inputs, inputs, 1)
-        if req_type == "read" and readable:
-            return True
-        if req_type == "write" and writable:
+        if (_input and readable) or ((not _input) and writable):
             return True
         elif exceptional:
-            return False
+            return None
+
+def recv_http_message(sock):
+    header = b''
+    body = b''
+    is_header = True
+    content_length = 0
+    while True:
+        cur = sock.recv(BUFFER_SIZE)
+        if not cur:
+            return None, 0
+
+        if is_header:
+            header += cur
+        else:
+            body += cur
+        if clrf.encode() in header:
+            splited = header.split(clrf.encode())
+            header, body = splited[0], splited[1]
+            is_header = False
+            lines = header.split(cl.encode())
+            for line in lines:
+                if b"Content-Length" in line:
+                    content_length = int(line.split(b" ")[1])
+            if not content_length or len(body) >= content_length:
+                return header + clrf.encode() + body, content_length
+        
+        if content_length >= 0 and len(body) >= content_length:
+            return header + clrf.encode() + body, content_length
 
 
-# def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
-#     try:
-#         _run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port)
-#     except Exception as e:
-#         print("Exception: ", e)
+def get_bitrate(bitrate_array, avg_tput):
+    avg_tput /= 1.5
+    bitrate_array.sort()
+    for i in range(len(bitrate)):
+        if bitrate_array[i] >= avg_tput:
+            return bitrate[i-1]
+    return max(bitrate)
+
+def get_path(_message):
+    lines = _message.split(cl.encode())
+    return lines[0].split(b" ")[1]
 
 
 def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
     to_server_socket = socket(AF_INET, SOCK_STREAM)
     to_server_socket.bind((proxy_ip, 0))
     to_server_socket.connect((server_ip, server_port))
-    print("++++++++ Starting Connection ++++++++")
-    # step2: listen to the client
-    avg_tput = -1  # Kbps
-    flag_mpd = False
-    global bitrate_array
-    suggested_bitrate = -1
+    print("Starting Connection")
+
+    avg_tput = -1
+    manifest = False
+    opt_bitrate = -1
     while True:
-        # step2.1: gather the whole message and modify
-        if not io_select(proxy_sock, "read"):
+        # get message
+
+        if not io_select(proxy_sock, 1):
             break
         message, content_length = recv_http_message(proxy_sock)
-   #     if len(message) < 10:
-  #          print("proxy send the response to client: " + str(repr(message)))
- #       else:
-#            print("proxy receive the message from client: ", message.split(clrf.encode()))
-        print("\n---------------------------\n")
+
+        print("\nstart\n")
         if not message:
             break
 
-        if get_http_path(message).endswith(b"mpd"):
-            flag_mpd = True
-        elif suggested_bitrate != -1 and get_http_path(message).startswith(b"/vod"):
-            print("Current bitrate:  " + str(get_http_path(message)))
-
+        if b"mpd" in get_path(message):
+            manifest = True
+        elif opt_bitrate != -1 and get_path(message)[0:4] == b"/vod":
             r = re.search(b"\\d+", message)
             message = message[:int(r.start())] + str(bitrate) + message[int(r.end()):]
 
-            print("Bitrate changed to: " + str(get_http_path(message)))
-
-        # step2.2:
-        # step2.2.1: send the message to server and get response
         t_s = time.time()
-        if not io_select(to_server_socket, "write"):
+        if not io_select(to_server_socket, 0):
             break
         if isinstance(message, str):
             message = message.encode()
         to_server_socket.send(message)
-        if not io_select(to_server_socket, "read"):
+        if not io_select(to_server_socket, 1):
             break
         response, content_length = recv_http_message(to_server_socket)
         t_f = time.time()
         if len(response) == 0:
             break
 
-        # step2.2.2: cal Throughput
         duration = (t_f - t_s)
-        tput = len(response) * 8 / duration / 1e3
-        if avg_tput == -1:
-            avg_tput = tput
-        else:
+        tput = len(response) * 8 / duration
+        tput = tput / 1e3
+        if avg_tput != -1:
             avg_tput = alpha * tput + (1 - alpha) * avg_tput
+        else:
+            avg_tput = tput
         if bitrate_array:
-            suggested_bitrate = get_floor_or_min(bitrate_array, avg_tput * 2 / 3)
+            opt_bitrate = get_bitrate(bitrate_array, avg_tput)
 
-        # step2.3.3: write log
-        chunk_name = get_http_path(message)
+        chunk_name = get_path(message)
 
         rgx = re.search(b"\d+", message)
         bitrate = int(message[int(rgx.start()): int(rgx.end())])
 
-        logs = [time.time(), duration, tput, avg_tput, bitrate, server_ip, chunk_name]
-        log.write(" ".join([str(ind) for ind in logs]) + "\n")
         log_line = f"{str(time.time())} {str(duration)} {str(tput)} {str(avg_tput)} {str(bitrate)} " \
                    f"{str(server_ip)} {str(chunk_name)}"
         log.write(log_line + '\n')
         print(f"writing to file: {log_line}\n")
 
-        # step2.2.4: get_bitrates_from_mpd
-        if flag_mpd:
-            flag_mpd = False
-            temp = []
+        if manifest:
+            manifest = False
+            #temp = []
             body = response.split(clrf.encode())[1]
-            root = ET.fromstring(body)
-            for media in root.findall('{http://ns.adobe.com/mpd/1.0}media'):
-                temp.append(int(media.attrib["bitrate"]))
-            bitrate_array = sorted(temp)
-
-            
-            message = message.replace( b"big_buck_bunny_nolist.mpd", b"big_buck_bunny.mpd")
-
+            print("Getting manifest")
+            print("before: ", message)
+            message = message.replace(b"BigBuckBunny_6s.mpd", b"BigBuckBunny_6s_nolist.mpd")
+            print("After: ", message)
             if isinstance(message, str):
                 message = message.encode()
             to_server_socket.send(message)
             response, content_length = recv_http_message(to_server_socket)
 
-        # step2.3: send the reponse to client
-        if not io_select(proxy_sock, "write"):
+        if not io_select(proxy_sock, 0):
             break
         if isinstance(response, str):
             response = response.encode()
         proxy_sock.send(response)
-      #  if len(response) < 10:
-      #      print("proxy send the response to client: repr==" + str(repr(response)))
-      #  else:
-      #      print("proxy send the response to client: ", response.split(clrf.encode()))
-        print("\n---------------------------\n")
+
+        print("\nend\n")
     proxy_sock.close()
     to_server_socket.close()
-    print("========== Closing Connection ==========")
-
-
-def main():
-    log = sys.argv[1]
-    alpha = float(sys.argv[2])
-    proxy_listen_port = int(sys.argv[3])
-    proxy_ip = sys.argv[4]  # fake ip
-    server_ip = sys.argv[5]
-
-    proxy_socket = socket(AF_INET, SOCK_STREAM)  # the welcome socket
-    proxy_socket.bind(('', proxy_listen_port))
-    proxy_socket.listen(10)
-    log = open(log, "w")
-    print("The proxy welcome socket is ready to receive")
-
-    while True:
-        # step1: construct TCP connection with client and server
-        client_socket, addr = proxy_socket.accept()
-        _thread.start_new_thread(run, (log, alpha, client_socket, proxy_ip, server_ip, server_port))
+    print("Closing Connection....")
 
 
 if __name__ == '__main__':
-    main()
+    log = sys.argv[1]
+    alpha = float(sys.argv[2])
+    proxy_listen_port = int(sys.argv[3])
+    proxy_ip = sys.argv[4]
+    server_ip = sys.argv[5]
+
+    proxy_socket = socket(AF_INET, SOCK_STREAM)
+    try:
+        proxy_socket.bind(('', proxy_listen_port))
+        proxy_socket.listen(10)
+        log = open(log, "w")
+    except Exception as e:
+        print(f"Error: {e}")
+        proxy_socket.close()
+        exit(1)
+
+    print("Proxy is ready...")
+
+    while True:
+        try:
+            client_socket, addr = proxy_socket.accept()
+            _thread.start_new_thread(run, (log, alpha, client_socket, proxy_ip, server_ip, server_port))
+        except KeyboardInterrupt:
+            client_socket.close()
+            proxy_socket.close()
+            log.close()
+
 
