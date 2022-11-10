@@ -15,6 +15,9 @@ bitrate_array = []
 
 
 def io_select(sock, _input):
+    """
+        
+    """
     while True:
         inputs = [sock]
         readable, writable, exceptional = select.select(inputs, inputs, inputs, 1)
@@ -22,6 +25,7 @@ def io_select(sock, _input):
             return True
         elif exceptional:
             return None
+
 
 def recv_http_message(sock):
     header = b''
@@ -48,8 +52,9 @@ def recv_http_message(sock):
             if not content_length or len(body) >= content_length:
                 return header + clrf.encode() + body, content_length
         
-        if content_length >= 0 and len(body) >= content_length:
+        if not is_header and len(body) >= content_length:
             return header + clrf.encode() + body, content_length
+
 
 
 def get_bitrate(bitrate_array, avg_tput):
@@ -57,27 +62,31 @@ def get_bitrate(bitrate_array, avg_tput):
     bitrate_array.sort()
     for i in range(len(bitrate)):
         if bitrate_array[i] >= avg_tput:
-            return bitrate[i-1]
-    return max(bitrate)
+            return bitrate[i-1] # send index i-1
+    return max(bitrate) # if avg_tput is larger than all bitrates, then send max
+
 
 def get_path(_message):
+    """
+    """
     lines = _message.split(cl.encode())
     return lines[0].split(b" ")[1]
 
 
-def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
+def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
     to_server_socket = socket(AF_INET, SOCK_STREAM)
-    to_server_socket.bind((proxy_ip, 0))
+    to_server_socket.bind((fake_ip, 0))
     to_server_socket.connect((server_ip, server_port))
-    print("Starting Connection")
 
     avg_tput = -1
     manifest = False
     opt_bitrate = -1
+    
+    print("Starting Connection")
     while True:
         # get message
 
-        if not io_select(proxy_sock, 1):
+        if not io_select(proxy_sock, 1): # the select is not required (work the same without) but it's goo practice..
             break
         message, content_length = recv_http_message(proxy_sock)
 
@@ -87,7 +96,7 @@ def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
 
         if b"mpd" in get_path(message):
             manifest = True
-        elif opt_bitrate != -1 and get_path(message)[0:4] == b"/vod":
+        elif opt_bitrate != -1 and b"BigBuckBunny" in get_path(message):
             r = re.search(b"\\d+", message)
             message = message[:int(r.start())] + str(bitrate) + message[int(r.end()):]
 
@@ -151,7 +160,7 @@ if __name__ == '__main__':
     log = sys.argv[1]
     alpha = float(sys.argv[2])
     proxy_listen_port = int(sys.argv[3])
-    proxy_ip = sys.argv[4]
+    fake_ip = sys.argv[4]
     server_ip = sys.argv[5]
 
     proxy_socket = socket(AF_INET, SOCK_STREAM)
@@ -169,7 +178,7 @@ if __name__ == '__main__':
     while True:
         try:
             client_socket, addr = proxy_socket.accept()
-            _thread.start_new_thread(run, (log, alpha, client_socket, proxy_ip, server_ip, server_port))
+            _thread.start_new_thread(run, (log, alpha, client_socket, fake_ip, server_ip, server_port))
         except KeyboardInterrupt:
             client_socket.close()
             proxy_socket.close()
