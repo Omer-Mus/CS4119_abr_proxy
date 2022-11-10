@@ -14,17 +14,17 @@ cl = "\r\n"
 bitrate_array = []
 
 
-def io_select(sock, _input):
-    """
+#def io_select(sock, _input):
+#    """
         
-    """
-    while True:
-        inputs = [sock]
-        readable, writable, exceptional = select.select(inputs, inputs, inputs, 1)
-        if (_input and readable) or ((not _input) and writable):
-            return True
-        elif exceptional:
-            return None
+#    """
+#    while True:
+#        inputs = [sock]
+#        readable, writable, exceptional = select.select(inputs, inputs, inputs, 1)
+#        if (_input and readable) or ((not _input) and writable):
+#            return True
+#        elif exceptional:
+#            return None
 
 
 def recv_http_message(sock):
@@ -58,14 +58,14 @@ def recv_http_message(sock):
 
 
 def get_bitrate(bitrate_array, avg_tput):
-    avg_tput /= 1.5
-    bitrate_array.sort()
-    for i in range(len(bitrate)):
-        if bitrate_array[i] >= avg_tput:
-            return bitrate[i-1] # send index i-1
-    return max(bitrate) # if avg_tput is larger than all bitrates, then send max
-
-
+    if not bitrate_array:
+        return 40000
+    for r in bitrate_array:
+        if avg_tput/r >= 1.5:
+            return rate
+    return min(bitrate_array)*1.5
+    
+	
 def get_path(_message):
     """
     """
@@ -86,8 +86,8 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
     while True:
         # get message
 
-        if not io_select(proxy_sock, 1): # the select is not required (work the same without) but it's goo practice..
-            break
+        #if not io_select(proxy_sock, 1): # the select is not required (work the same without) but it's goo practice..
+        #    break
         message, content_length = recv_http_message(proxy_sock)
 
         print("\nstart\n")
@@ -101,13 +101,13 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
             message = message[:int(r.start())] + str(bitrate) + message[int(r.end()):]
 
         t_s = time.time()
-        if not io_select(to_server_socket, 0):
-            break
+        #if not io_select(to_server_socket, 0):
+        #    break
         if isinstance(message, str):
             message = message.encode()
         to_server_socket.send(message)
-        if not io_select(to_server_socket, 1):
-            break
+        #if not io_select(to_server_socket, 1):
+        #    break
         response, content_length = recv_http_message(to_server_socket)
         t_f = time.time()
         if not response:
@@ -144,8 +144,8 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
             to_server_socket.send(message)
             response, content_length = recv_http_message(to_server_socket)
 
-        if not io_select(proxy_sock, 0):
-            break
+        #if not io_select(proxy_sock, 0):
+        #    break
         if isinstance(response, str):
             response = response.encode()
         proxy_sock.send(response)
