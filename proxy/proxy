@@ -6,7 +6,6 @@ from socket import socket, AF_INET, SOCK_STREAM
 import sys
 import _thread
 import time
-import xml.etree.ElementTree as ET
 
 BUFFER_SIZE = 1040000
 server_port = 8080
@@ -127,8 +126,6 @@ def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
 
         if manifest:
             manifest = False
-            #temp = []
-            body = response.split(clrf.encode())[1]
             print("Getting manifest")
             print("before: ", message)
             message = message.replace(b"BigBuckBunny_6s.mpd", b"BigBuckBunny_6s_nolist.mpd")
