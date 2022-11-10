@@ -31,7 +31,7 @@ def recv_http_message(sock):
     while True:
         cur = sock.recv(BUFFER_SIZE)
         if not cur:
-            return None, 0
+            return "", 0
 
         if is_header:
             header += cur
@@ -101,7 +101,7 @@ def run(log, alpha, proxy_sock, proxy_ip, server_ip, server_port):
             break
         response, content_length = recv_http_message(to_server_socket)
         t_f = time.time()
-        if len(response) == 0:
+        if not response:
             break
 
         duration = (t_f - t_s)
