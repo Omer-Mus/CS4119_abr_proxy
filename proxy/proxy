@@ -1,7 +1,13 @@
 #!/usr/bin/env python3.10
 
+
+
+"""
+Name: Omer Mustel
+UNI: om2349
+Nov 11, 2022
+"""
 import re
-import select
 from socket import socket, AF_INET, SOCK_STREAM
 import sys
 import _thread
