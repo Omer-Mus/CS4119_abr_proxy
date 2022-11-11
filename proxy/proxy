@@ -63,7 +63,7 @@ def get_bitrate(bitrate_array, avg_tput):
 	:return the optimal bitrate or the max.
     """
     if not bitrate_array:
-        return 50000
+        return 50000 # default value if the array is empty
     #avg_tput /= 1.5
     #if min(bitrate_array) >= avg_tput:
         #return min(bitrate_array)
@@ -170,7 +170,7 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
         #print("Throughput: ", tput)
         avg_tput = alpha * tput + (1 - alpha) * avg_tput
         #print("avg tput: ", avg_tput)
-        opt_bitrate = get_bitrate(bitrate_array, avg_tput)
+        opt_bitrate = get_bitrate(sorted(bitrate_array), avg_tput)
         #print("chosen BR:", opt_bitrate) 
         c_name = get_path(message)
         # create log
