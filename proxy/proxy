@@ -7,7 +7,7 @@ import sys
 import _thread
 import time
 
-BUFFER_SIZE = 1040000
+BUFFER_SIZE = 81920
 server_port = 8080
 clrf = "\r\n\r\n"
 cl = "\r\n"
@@ -40,10 +40,11 @@ def recv_http_message(sock):
             splited = header.split(clrf.encode())
             header, body = splited[0], splited[1]
             is_header = False
-            lines = header.split(cl.encode())
-            for line in lines:
-                if b"Content-Length" in line:
-                    content_length = int(line.split(b" ")[1])
+            r = re.search(b'Content-Length:', header)  # get  Content-Length
+            if r:
+                idx = r.regs[0][1]  
+                cnl = header[idx:]
+                content_length = int(cnl.split(b'\r\n')[0].decode())
             if not content_length or len(body) >= content_length:
                 return header + clrf.encode() + body, content_length
 
@@ -80,7 +81,7 @@ def get_path(_message):
     """
 
     lines = _message.split(cl.encode())
-    return lines[0].split(b" ")[1]
+    return lines[0].split(b' ')[1]
 
 
 def get_manifest(to_server_socket, message, response):
@@ -110,7 +111,7 @@ def get_manifest(to_server_socket, message, response):
     print(bitrate_array)
     bitrate_array.sort(reverse = True)
     print("before: ", message)
-    message = message.replace(b"BigBuckBunny_6s.mpd", b"BigBuckBunny_6s_nolist.mpd")
+    message = message.replace(b'BigBuckBunny_6s.mpd', b'BigBuckBunny_6s_nolist.mpd')
     print("After: ", message)
 
     if isinstance(message, str):
@@ -149,7 +150,7 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
             manifest = True
         elif opt_bitrate != -1 and b"BigBuckBunny" in get_path(message): #modify message w/ bitrate
             r = re.search(b"\\d+", message)
-            message = message[:int(r.start())] + bytes(opt_bitrate) + message[int(r.end()):]
+            message = message[:int(r.start())] + str(opt_bitrate).encode() + message[int(r.end()):]
             print("the bitrate: ", opt_bitrate)
     
         if isinstance(message, str): # send message
@@ -164,7 +165,7 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
         # calculate throughput 
 
         duration = (t_f - t_s)
-        tput = content_length * 8 / duration
+        tput = len(response) * 8 / duration
         if avg_tput == 0:
             avg_tput = tput
         print("Throughput: ", tput)
@@ -172,13 +173,13 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
         print("avg tput: ", avg_tput)
         opt_bitrate = get_bitrate(bitrate_array, avg_tput)
         print("chosen BR:", opt_bitrate) 
-        c_name = get_path(message).decode()
+        c_name = get_path(message)
         # create log
         rgx = re.search(b"\d+", message)
-        bitrate = int(message[int(rgx.start()): int(rgx.end())].decode())/1000
-
-        log_line = f"{str(time.time())} {str(duration)} {str(tput)} {str(avg_tput)} {str(bitrate)} " \
-                   f"{str(server_ip)} b'{c_name}'"
+        bitrate = (message[int(rgx.start()): int(rgx.end())].decode())
+        #bitrate = opt_bitrate/1000
+        log_line = f"{str(time.time())} {str(duration)} {str(tput/1000)} {str(avg_tput/1000)} {str(bitrate)} " \
+                   f"{str(server_ip)} {c_name}"
         log.write(log_line + '\n')
         print(f"writing to file: {log_line}\n")
 
