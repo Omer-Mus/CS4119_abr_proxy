@@ -14,20 +14,14 @@ cl = "\r\n"
 bitrate_array = []
 
 
-#def io_select(sock, _input):
-#    """
-        
-#    """
-#    while True:
-#        inputs = [sock]
-#        readable, writable, exceptional = select.select(inputs, inputs, inputs, 1)
-#        if (_input and readable) or ((not _input) and writable):
-#            return True
-#        elif exceptional:
-#            return None
-
-
 def recv_http_message(sock):
+    """
+	The loop will proceed until all message is read. It separates the header and the body, get the 
+	conent length, and return only when the whole message is read.
+
+	:param sock: The socket we receive the message from
+	:return: the message from the socket and its content length 
+    """
     header = b''
     body = b''
     is_header = True
@@ -41,6 +35,7 @@ def recv_http_message(sock):
             header += cur
         else:
             body += cur
+       
         if clrf.encode() in header:
             splited = header.split(clrf.encode())
             header, body = splited[0], splited[1]
@@ -51,109 +46,155 @@ def recv_http_message(sock):
                     content_length = int(line.split(b" ")[1])
             if not content_length or len(body) >= content_length:
                 return header + clrf.encode() + body, content_length
-        
+
         if not is_header and len(body) >= content_length:
             return header + clrf.encode() + body, content_length
 
 
 
 def get_bitrate(bitrate_array, avg_tput):
+    """
+	Taking the average throughput over the rate, checking if its equal or greater to 1.5.
+	If not found, and there is no bitreate bigger than that, we will return  max bitrate available.
+
+	:param bitrate_array: global array storing the bitrates
+	:param avg_tput: average throughput result of the calculation given in run()
+	:return the optimal bitrate or the max.
+    """
     if not bitrate_array:
-        return 40000
-    for r in bitrate_array:
-        if avg_tput/r >= 1.5:
-            return rate
-    return min(bitrate_array)*1.5
+        return 50000
+    #avg_tput /= 1.5
+    #if min(bitrate_array) >= avg_tput:
+        #return min(bitrate_array)
+    for r in range(len(bitrate_array)):
+        if avg_tput/bitrate_array[r] >= 1.5:
+            return bitrate_array[r]
+    print("Returned max")
+    return max(bitrate_array)
     
 	
 def get_path(_message):
     """
+    :param _message: http message
+    :return: path from message
     """
+
     lines = _message.split(cl.encode())
     return lines[0].split(b" ")[1]
 
 
+def get_manifest(to_server_socket, message, response):
+    """
+    the function take s the available bandwidths from the manifest file
+    and store it in bitrate_array (sorting in reverse to have largest BW first). 
+    Then, it replaces the mpd file with nolist.
+    send to the server the message, and return the response.
+
+    :param to_server_socket: the server socket
+    :param message: message to modify
+    :param response: server's response message
+    :return: message response from server after modifying the message
+    """
+    print("Getting manifest")
+
+    #retr bitrates
+
+    print("attemt to get bitrates")
+
+    #print(response.decode()) 
+    bitrates = re.findall(re.compile(r'bandwidth="[0-9]*"'), response.decode())
+    for i in bitrates:
+        rate = int(i.split('"')[1])
+        bitrate_array.append(rate)
+    #avg_tput = min(bitrate_array)
+    print(bitrate_array)
+    bitrate_array.sort(reverse = True)
+    print("before: ", message)
+    message = message.replace(b"BigBuckBunny_6s.mpd", b"BigBuckBunny_6s_nolist.mpd")
+    print("After: ", message)
+
+    if isinstance(message, str):
+        message = message.encode()
+    to_server_socket.send(message) #send req to server
+    return recv_http_message(to_server_socket)
+
+
+
+
 def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
+    """
+	Main event loop dealing with 1 client.
+	after receving a connection, the proxy will connect the server, 
+	receive a request fromt he cleint, and start the interraction.
+
+	:params log, alpha, proxy_sock, fake_ip, server_ip, server_port: all inputs
+	: no return:
+    """
     to_server_socket = socket(AF_INET, SOCK_STREAM)
     to_server_socket.bind((fake_ip, 0))
     to_server_socket.connect((server_ip, server_port))
 
-    avg_tput = -1
+    avg_tput = 0
     manifest = False
     opt_bitrate = -1
-    
     print("Starting Connection")
     while True:
-        # get message
-
-        #if not io_select(proxy_sock, 1): # the select is not required (work the same without) but it's goo practice..
-        #    break
+    	# get message
         message, content_length = recv_http_message(proxy_sock)
-
         print("\nstart\n")
         if not message:
             break
 
-        if b"mpd" in get_path(message):
+        if b"BigBuckBunny_6s.mpd" in get_path(message): # check if it's manifest
             manifest = True
-        elif opt_bitrate != -1 and b"BigBuckBunny" in get_path(message):
+        elif opt_bitrate != -1 and b"BigBuckBunny" in get_path(message): #modify message w/ bitrate
             r = re.search(b"\\d+", message)
-            message = message[:int(r.start())] + str(bitrate) + message[int(r.end()):]
-
-        t_s = time.time()
-        #if not io_select(to_server_socket, 0):
-        #    break
-        if isinstance(message, str):
+            message = message[:int(r.start())] + bytes(opt_bitrate) + message[int(r.end()):]
+            print("the bitrate: ", opt_bitrate)
+    
+        if isinstance(message, str): # send message
             message = message.encode()
+        t_s = time.time() # start time
         to_server_socket.send(message)
-        #if not io_select(to_server_socket, 1):
-        #    break
+        # receive response
         response, content_length = recv_http_message(to_server_socket)
-        t_f = time.time()
+        t_f = time.time() #end 
         if not response:
             break
+        # calculate throughput 
 
         duration = (t_f - t_s)
-        tput = len(response) * 8 / duration
-        tput = tput / 1e3
-        if avg_tput != -1:
-            avg_tput = alpha * tput + (1 - alpha) * avg_tput
-        else:
+        tput = content_length * 8 / duration
+        if avg_tput == 0:
             avg_tput = tput
-        if bitrate_array:
-            opt_bitrate = get_bitrate(bitrate_array, avg_tput)
-
-        chunk_name = get_path(message)
-
+        print("Throughput: ", tput)
+        avg_tput = alpha * tput + (1 - alpha) * avg_tput
+        print("avg tput: ", avg_tput)
+        opt_bitrate = get_bitrate(bitrate_array, avg_tput)
+        print("chosen BR:", opt_bitrate) 
+        c_name = get_path(message).decode()
+        # create log
         rgx = re.search(b"\d+", message)
-        bitrate = int(message[int(rgx.start()): int(rgx.end())])
+        bitrate = int(message[int(rgx.start()): int(rgx.end())].decode())/1000
 
         log_line = f"{str(time.time())} {str(duration)} {str(tput)} {str(avg_tput)} {str(bitrate)} " \
-                   f"{str(server_ip)} {str(chunk_name)}"
+                   f"{str(server_ip)} b'{c_name}'"
         log.write(log_line + '\n')
         print(f"writing to file: {log_line}\n")
 
-        if manifest:
+        if manifest: # get manifest
             manifest = False
-            print("Getting manifest")
-            print("before: ", message)
-            message = message.replace(b"BigBuckBunny_6s.mpd", b"BigBuckBunny_6s_nolist.mpd")
-            print("After: ", message)
-            if isinstance(message, str):
-                message = message.encode()
-            to_server_socket.send(message)
-            response, content_length = recv_http_message(to_server_socket)
-
-        #if not io_select(proxy_sock, 0):
-        #    break
-        if isinstance(response, str):
+            response, content_length = get_manifest(to_server_socket, message, response) 
+            if not response:
+                break
+        if isinstance(response, str): # send response to client
             response = response.encode()
         proxy_sock.send(response)
 
         print("\nend\n")
     proxy_sock.close()
     to_server_socket.close()
-    print("Closing Connection....")
+    print("Closing Connection...")
 
 
 if __name__ == '__main__':
@@ -174,7 +215,7 @@ if __name__ == '__main__':
         exit(1)
 
     print("Proxy is ready...")
-
+  	# for every cleint we accept, and move to the next thread
     while True:
         try:
             client_socket, addr = proxy_socket.accept()
@@ -183,5 +224,6 @@ if __name__ == '__main__':
             client_socket.close()
             proxy_socket.close()
             log.close()
+
 
 
