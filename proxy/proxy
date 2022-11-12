@@ -183,7 +183,7 @@ def run(log, alpha, proxy_sock, fake_ip, server_ip, server_port):
         
         #bitrate = opt_bitrate/1000
         reg = re.search(r"\d+", message.decode())
-        bitrate = int(message[int(reg.start()) : int(reg.end())])
+        bitrate = int(message[int(reg.start()) : int(reg.end())])/1000
         log_line = f"{str(time.time())} {str(duration)} {str(tput/1000)} {str(avg_tput/1000)} {str(bitrate)} " \
                    f"{str(server_ip)} {c_name}"
         log.write(log_line + '\n')
